@@ -50,42 +50,47 @@ update_package_cache() {
 
 install_package() {
     local pkg=$1
-    echo "📦 Installing package: $pkg"
-    retry 3 apt install -y "$pkg"
+
+    if command -v apt >/dev/null 2>&1; then
+        echo "📦 Installing missing package: $pkg"
+
+        # Update package list first
+        apt-get update -y
+
+        # Attempt install, if unmet deps, fix broken and retry
+        if ! apt-get install -y "$pkg"; then
+            echo "⚠️ Encountered unmet dependencies, fixing broken packages..."
+            apt-get install -f -y
+            apt-get install -y "$pkg" || {
+                echo "❌ Failed to install $pkg after fixing dependencies."
+                exit 1
+            }
+        fi
+
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y "$pkg" || {
+            echo "❌ Failed to install $pkg using yum."
+            exit 1
+        }
+    else
+        echo "❌ Unsupported package manager. Install $pkg manually."
+        exit 1
+    fi
 }
 
 check_requirements() {
     echo "🔍 Checking dependencies..."
-
-    # Packages needed
     REQUIRED_PKGS=(iptables ipset conntrack)
 
-    # Check if apt available
-    if ! command -v apt >/dev/null 2>&1; then
-        echo "❌ apt package manager not found. Please install dependencies manually."
-        exit 1
-    fi
-
-    update_package_cache
-    fix_apt_dependencies
-
     for pkg in "${REQUIRED_PKGS[@]}"; do
-        if ! dpkg -s "$pkg" >/dev/null 2>&1; then
-            install_package "$pkg" || {
-                echo "❌ Failed to install $pkg. Trying to fix dependencies and retry."
-                fix_apt_dependencies
-                install_package "$pkg" || {
-                    echo "❌ Could not install $pkg after fixing dependencies. Exiting."
-                    exit 1
-                }
-            }
+        if ! command -v "$pkg" >/dev/null 2>&1; then
+            install_package "$pkg"
         else
-            echo "✅ $pkg is already installed."
+            echo "✅ $pkg found."
         fi
     done
-
-    fix_apt_dependencies
 }
+
 
 load_kernel_modules() {
     echo "📦 Ensuring kernel modules are loaded..."
