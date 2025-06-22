@@ -3,7 +3,7 @@
 # CAPSHIELD 2025
 # COPYRIGHT
 
-set -e
+set -euo pipefail
 
 LOG_FILE="/var/log/capshield/install.log"
 mkdir -p /var/log/capshield
@@ -22,34 +22,85 @@ cat << "EOF"
 EOF
 echo -e "\e[0m"
 echo -e "\n⚙️  Installing CapShield Basic..."
+retry() {
+    local -r -i max_attempts="$1"; shift
+    local -i attempt_num=1
 
-
-check_requirements() {
-    echo "🔍 Checking dependencies..."
-    REQUIRED_PKGS=(iptables ipset conntrack)
-
-    for pkg in "${REQUIRED_PKGS[@]}"; do
-        if ! command -v "$pkg" >/dev/null 2>&1; then
-            echo "📦 Installing missing package: $pkg"
-            if command -v apt >/dev/null 2>&1; then
-                apt update -y && apt install -y "$pkg"
-            elif command -v yum >/dev/null 2>&1; then
-                yum install -y "$pkg"
-            else
-                echo "❌ Unsupported package manager. Install $pkg manually."
-                exit 1
-            fi
+    until "$@"; do
+        if (( attempt_num == max_attempts )); then
+            echo "❌ Command failed after $attempt_num attempts."
+            return 1
         else
-            echo "✅ $pkg found."
+            echo "⚠️ Command failed. Attempt $attempt_num/$max_attempts:"
+            sleep $((attempt_num * 2))
+            ((attempt_num++))
         fi
     done
 }
 
+fix_apt_dependencies() {
+    echo "🔧 Fixing broken dependencies..."
+    retry 3 apt --fix-broken install -y
+}
+
+update_package_cache() {
+    echo "🔄 Updating package cache..."
+    retry 3 apt update -y
+}
+
+install_package() {
+    local pkg=$1
+    echo "📦 Installing package: $pkg"
+    retry 3 apt install -y "$pkg"
+}
+
+check_requirements() {
+    echo "🔍 Checking dependencies..."
+
+    # Packages needed
+    REQUIRED_PKGS=(iptables ipset conntrack)
+
+    # Check if apt available
+    if ! command -v apt >/dev/null 2>&1; then
+        echo "❌ apt package manager not found. Please install dependencies manually."
+        exit 1
+    fi
+
+    update_package_cache
+    fix_apt_dependencies
+
+    for pkg in "${REQUIRED_PKGS[@]}"; do
+        if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+            install_package "$pkg" || {
+                echo "❌ Failed to install $pkg. Trying to fix dependencies and retry."
+                fix_apt_dependencies
+                install_package "$pkg" || {
+                    echo "❌ Could not install $pkg after fixing dependencies. Exiting."
+                    exit 1
+                }
+            }
+        else
+            echo "✅ $pkg is already installed."
+        fi
+    done
+
+    fix_apt_dependencies
+}
+
 load_kernel_modules() {
     echo "📦 Ensuring kernel modules are loaded..."
-    for mod in ip_conntrack xt_recent ip_tables; do
-        if ! lsmod | grep -q "$mod"; then
-            modprobe "$mod" || echo "⚠️ Could not load module $mod (may not be needed)"
+
+    local modules=(ip_conntrack xt_recent ip_tables)
+    for mod in "${modules[@]}"; do
+        if ! lsmod | grep -q "^$mod"; then
+            echo "Loading kernel module: $mod"
+            if ! modprobe "$mod"; then
+                echo "⚠️ Could not load module $mod (may not be critical)."
+            else
+                echo "✅ Module $mod loaded."
+            fi
+        else
+            echo "✅ Module $mod already loaded."
         fi
     done
 }
@@ -62,7 +113,6 @@ summary() {
     echo " - Use 'systemctl status capshield' to see if the protection service is running"
     echo "✅ All done!"
 }
-
 check_requirements
 load_kernel_modules
 
@@ -202,3 +252,4 @@ systemctl enable capshield.service
 systemctl start capshield.service
 
 summary
+
