@@ -21,7 +21,7 @@ cat << "EOF"
              |_|                               
 EOF
 echo -e "\e[0m"
-echo "\n⚙️  Installing CapShield Pro..."
+echo -e "\n⚙️  Installing CapShield Basic..."
 
 
 check_requirements() {
