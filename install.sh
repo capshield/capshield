@@ -38,6 +38,40 @@ retry() {
     done
 }
 
+check_kernel_update() {
+    echo "🔄 Checking for kernel updates..."
+
+    # Update package list
+    apt-get update -y
+
+    # Perform full upgrade to get latest kernel and packages
+    apt-get dist-upgrade -y
+
+    # Get currently running kernel version
+    current_kernel=$(uname -r)
+    # Get latest installed kernel version from linux-image package
+    latest_kernel=$(dpkg --list | grep linux-image | awk '{print $2}' | grep -Eo '6\.[0-9]+\.[0-9]+-[0-9]+-generic' | sort -V | tail -1)
+
+    if [[ "$current_kernel" != "$latest_kernel" ]]; then
+        echo -e "\n⚠️ Newer kernel available"
+        echo "Currently running kernel: $current_kernel"
+        echo "Latest installed kernel: $latest_kernel"
+        echo -e "\nYou need to reboot for the new kernel to take effect."
+
+        read -p "Do you want to reboot now? [y/N]: " reboot_answer
+        if [[ "$reboot_answer" =~ ^[Yy]$ ]]; then
+            echo "Rebooting system..."
+            reboot
+            exit 0
+        else
+            echo "⚠️ Please remember to reboot later before running CapShield."
+        fi
+    else
+        echo "✅ Running latest kernel version: $current_kernel"
+    fi
+}
+
+
 fix_apt_dependencies() {
     echo "🔧 Fixing broken dependencies..."
     retry 3 apt --fix-broken install -y
